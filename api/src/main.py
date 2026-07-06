@@ -1,75 +1,57 @@
 """
-FastAPI OpenAI Compatible API
+Ultra Lite FastAPI (n8n only)
 """
 
-import os
 import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-import torch
 import uvicorn
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from .core.config import settings
-from .routers.debug import router as debug_router
-from .routers.development import router as dev_router
 from .routers.openai_compatible import router as openai_router
-from .routers.web_player import router as web_router
+from .services.temp_manager import cleanup_temp_files
 
 
-def setup_logger():
-    """Configure loguru logger with custom formatting"""
-    valid_levels = ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
-    level = os.getenv("API_LOG_LEVEL", "DEBUG").upper()
-    if level not in valid_levels:
-        level = "DEBUG"
-    print(f"Global API loguru logger level: {level}")
-    config = {
-        "handlers": [
-            {
-                "sink": sys.stdout,
-                "format": "<fg #2E8B57>{time:hh:mm:ss A}</fg #2E8B57> | "
-                "{level: <8} | "
-                "<fg #4169E1>{module}:{line}</fg #4169E1> | "
-                "{message}",
-                "colorize": True,
-                "level": level,
-            },
-        ],
-    }
-    logger.remove()
-    logger.configure(**config)
-    logger.level("ERROR", color="<red>")
-
-
-# Configure logger
-setup_logger()
+# Minimal logger
+logger.remove()
+logger.add(sys.stdout, level="ERROR")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for model initialization"""
-    from .inference.model_manager import get_manager
-    from .inference.voice_manager import get_manager as get_voice_manager
-    from .services.temp_manager import cleanup_temp_files
-
-    # Clean old temp files on startup
+    # Cleanup only
     await cleanup_temp_files()
 
-    logger.info("Loading TTS model and voice packs...")
+    # DO NOT preload model here.
+    # Model should be loaded lazily inside model_manager
+    yield
 
-    try:
-        # Initialize managers
-        model_manager = await get_manager()
-        voice_manager = await get_voice_manager()
 
-        # Initialize model with warmup and get status
-        device, model, voicepack_count = await model_manager.initialize_with_warmup(
-            voice_manager
-        )
+app = FastAPI(
+    title="Kokoro Lite",
+    version="1.0",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    lifespan=lifespan,
+)
+
+# Only endpoint required by n8n
+app.include_router(openai_router, prefix="/v1")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "api.src.main:app",
+        host="0.0.0.0",
+        port=8880,
+    )        )
 
     except Exception as e:
         logger.error(f"Failed to initialize model: {e}")
